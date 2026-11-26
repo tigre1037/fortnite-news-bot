@@ -218,17 +218,51 @@ def check_feeds(state):
                 print("Solo se enviaran noticias nuevas.")
                 continue
 
-            seen = set(state[account])
+            
+seen = set(state[account])
+cutoff = datetime.now(timezone.utc) - timedelta(minutes=30)
 
-            # Ordenar desde la mas antigua a la mas reciente
-            new_posts = [
-                post for post in reversed(feed.entries)
-                if get_post_id(post) not in seen
-            ]
+new_posts = []
+ignored_old = []
 
-            if not new_posts:
-                print("No hay noticias nuevas.")
-                continue
+# Ordenar desde la mas antigua a la mas reciente
+for post in reversed(feed.entries):
+    post_id = get_post_id(post)
+
+    if not post_id or post_id in seen:
+        continue
+
+    published = (
+        post.get("published_parsed")
+        or post.get("updated_parsed")
+    )
+
+    # Sin fecha verificable, no enviar
+    if not published:
+        ignored_old.append(post_id)
+        continue
+
+    post_date = datetime(
+        *published[:6],
+        tzinfo=timezone.utc
+    )
+
+    if post_date < cutoff:
+        ignored_old.append(post_id)
+    else:
+        new_posts.append(post)
+
+# Registrar publicaciones antiguas para no repetirlas
+if ignored_old:
+    state[account].extend(ignored_old)
+    state[account] = state[account][-500:]
+    save_state(state)
+    seen.update(ignored_old)
+
+if not new_posts:
+    print("No hay noticias nuevas de los ultimos 30 minutos.")
+    continue
+
 
             for post in new_posts:
 
