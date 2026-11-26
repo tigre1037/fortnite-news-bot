@@ -131,9 +131,10 @@ def get_image(post):
 
 def fetch_posts(account, cutoff):
     url = f"{API_BASE_URL}/{account}/statuses"
-    params = {
-        "count": API_POST_COUNT,
-        "lang": "es",
+  params = {
+    "count": API_POST_COUNT,
+    "lang": "es"
+}
         # Unix timestamp en segundos: pedir publicaciones posteriores al corte
         "since": int(cutoff.timestamp())
     }
