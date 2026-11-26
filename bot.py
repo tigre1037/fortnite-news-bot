@@ -34,7 +34,7 @@ STATE_FILE = BASE_DIR / "seen_posts.json"
 POLL_SECONDS = 300
 
 # Zona horaria de Costa Rica
-CR_TIMEZONE = timezone(timedelta(hours=-6))
+PERU_TIMEZONE = timezone(timedelta(hours=-5))
 
 
 # =====================================
@@ -145,12 +145,12 @@ def send_news(account, post):
         date = datetime(
             *published[:6],
             tzinfo=timezone.utc
-        ).astimezone(CR_TIMEZONE)
+        ).astimezone(PERU_TIMEZONE)
 
         embed["timestamp"] = date.isoformat()
         embed["footer"]["text"] = (
             "Noticias de Fortnite | " + date.strftime("%d/%m/%Y - %H:%M")
-            + " (Costa Rica)"
+            + " (Perú)"
         )
 
     image = get_image(post)
