@@ -159,7 +159,7 @@ def send_news(account, post):
         embed["image"] = {"url": image}
 
     payload = {
-        "username": "X News Bot",
+        "username": "Noticias de Fortnite",
         "embeds": [embed],
         "allowed_mentions": {"parse": []}
     }
