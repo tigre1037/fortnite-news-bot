@@ -6,6 +6,7 @@ import time
 import html
 import requests
 import feedparser
+import calendar
 
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
@@ -177,6 +178,7 @@ def send_news(account, post):
 # COMPROBAR NOTICIAS NUEVAS
 # =====================================
 
+
 def check_feeds(state):
 
     for account, url in FEEDS.items():
@@ -191,92 +193,76 @@ def check_feeds(state):
             )
 
             response.raise_for_status()
-
             feed = feedparser.parse(response.content)
 
             if not feed.entries:
                 print("No se encontraron publicaciones.")
                 continue
 
-          # Primera ejecucion: iniciar historial sin saltarse
-# las publicaciones recientes.
-if account not in state:
-    state[account] = []
-    save_state(state)
+            if account not in state:
+                state[account] = []
+                save_state(state)
+                print("Historial inicializado.")
 
-    print("Historial inicializado.")
-    print("Comprobando publicaciones de los ultimos 30 minutos.")
+            seen = set(state[account])
+            cutoff = datetime.now(timezone.utc) - timedelta(minutes=30)
 
-seen = set(state[account])
+            new_posts = []
+            ignored_old = []
 
-cutoff = datetime.now(timezone.utc) - timedelta(minutes=30)
+            # Ordenar desde la mas antigua a la mas reciente
+            for post in reversed(feed.entries):
 
-new_posts = []
-ignored_old = []
+                post_id = get_post_id(post)
 
-# Ordenar desde la mas antigua a la mas reciente
-for post in reversed(feed.entries):
-    post_id = get_post_id(post)
+                if not post_id or post_id in seen:
+                    continue
 
-    if not post_id or post_id in seen:
-        continue
+                published = (
+                    post.get("published_parsed")
+                    or post.get("updated_parsed")
+                )
 
-    published = (
-        post.get("published_parsed")
-        or post.get("updated_parsed")
-    )
+                if not published:
+                    ignored_old.append(post_id)
+                    continue
 
-    # Sin fecha verificable, no enviar
-    if not published:
-        ignored_old.append(post_id)
-        continue
+                published_time = datetime.fromtimestamp(
+                    calendar.timegm(published),
+                    tz=timezone.utc
+                )
 
-        published_time = datetime.fromtimestamp(
-        calendar.timegm(published),
-        tz=timezone.utc
-    )
+                if published_time < cutoff:
+                    ignored_old.append(post_id)
+                    continue
 
-    # Ignorar publicaciones de mas de 30 minutos
-    if published_time < cutoff:
-        ignored_old.append(post_id)
-        continue
+                new_posts.append((published_time, post))
 
-    new_posts.append((published_time, post))
+            # Registrar publicaciones antiguas
+            if ignored_old:
+                state[account].extend(ignored_old)
+                state[account] = state[account][-500:]
+                save_state(state)
 
-    post_date = datetime(
-        *published[:6],
-        tzinfo=timezone.utc
-    )
+            if not new_posts:
+                print("No hay noticias nuevas de los ultimos 30 minutos.")
+                continue
 
-    if post_date < cutoff:
-        ignored_old.append(post_id)
-    else:
-        new_posts.append(post)
-
-# Registrar publicaciones antiguas para no repetirlas
-if ignored_old:
-    state[account].extend(ignored_old)
-    state[account] = state[account][-500:]
-    save_state(state)
-    seen.update(ignored_old)
-
-if not new_posts:
-    print("No hay noticias nuevas de los ultimos 30 minutos.")
-    continue
-
-
-            for post in new_posts:
+            # Enviar publicaciones recientes
+            for published_time, post in new_posts:
 
                 post_id = get_post_id(post)
 
                 try:
                     send_news(account, post)
 
-                    print("Noticia enviada:", post.get("title", "Sin titulo"))
+                    print(
+                        "Noticia enviada:",
+                        post.get("title", "Sin titulo")
+                    )
 
                     state[account].append(post_id)
                     state[account] = state[account][-500:]
-
                     save_state(state)
 
                     seen.add(post_id)
@@ -287,7 +273,6 @@ if not new_posts:
 
         except requests.RequestException as error:
             print(f"Error consultando {account}: {error}")
-
 
 # =====================================
 # INICIAR BOT
