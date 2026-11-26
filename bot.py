@@ -24,7 +24,7 @@ if not WEBHOOK_URL:
     raise SystemExit("No se encontro el webhook en .env")
 
 FEEDS = {
-    "InfoFortniteES": "https://fixupx.com/InfoFortniteES/feed.xml",
+    "InfoFortniteES": "https://fxtwitter.com/InfoFortniteES/feed.xml",
     "Fortnite_ES": "https://fixupx.com/Fortnite_ES/feed.xml"
 }
 
