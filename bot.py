@@ -27,7 +27,7 @@ ACCOUNTS = [
 
 # API publica de FxTwitter (JSON)
 API_BASE_URL = "https://api.fxtwitter.com/2/profile"
-API_POST_COUNT = 100
+API_POST_COUNT = 100  # La API permite un maximo de 100 por pagina
 
 STATE_FILE = BASE_DIR / "seen_posts.json"
 
@@ -129,15 +129,16 @@ def get_image(post):
 # CONSULTAR LA API DE FXTWITTER
 # =====================================
 
-def fetch_posts(account, cutoff):
+def fetch_posts(account):
     url = f"{API_BASE_URL}/{account}/statuses"
-  params = {
-    "count": API_POST_COUNT,
-    "lang": "es"
-}
-        # Unix timestamp en segundos: pedir publicaciones posteriores al corte
-        "since": int(cutoff.timestamp())
+
+    # El filtro de 30 minutos se aplica localmente mas abajo.
+    # Asi evitamos depender del parametro opcional 'since' de la API.
+    params = {
+        "count": API_POST_COUNT,
+        "lang": "es"
     }
+
     headers = {
         "User-Agent": "FortniteNewsDiscordBot/1.0",
         "Accept": "application/json"
@@ -152,29 +153,30 @@ def fetch_posts(account, cutoff):
                 timeout=25
             )
 
-            # La API usa 204 cuando no hay publicaciones posteriores a 'since'
+            # La API usa 204 cuando no hay publicaciones posteriores a 'since'.
+            # Aunque no enviamos 'since', contemplamos la respuesta por seguridad.
             if response.status_code == 204:
                 return []
 
-            # En la documentacion, 404 puede indicar cuenta no encontrada
-            # o una cronologia vacia. No se reintenta como error temporal.
+            # La documentacion indica 404 para cuenta no encontrada o cronologia vacia.
             if response.status_code == 404:
                 detail = "cuenta no encontrada o cronologia vacia"
                 try:
                     error_data = response.json()
-                    detail = (
-                        error_data.get("message")
-                        or error_data.get("error")
-                        or error_data.get("reason")
-                        or detail
-                    )
+                    if isinstance(error_data, dict):
+                        detail = (
+                            error_data.get("message")
+                            or error_data.get("error")
+                            or error_data.get("reason")
+                            or detail
+                        )
                 except ValueError:
                     pass
 
                 print(f"La API devolvio 404 para {account}: {detail}.")
                 return []
 
-            # Reintentar errores temporales o limite de solicitudes
+            # Reintentar errores temporales o limite de solicitudes.
             if response.status_code == 429 or response.status_code >= 500:
                 if intento < MAX_ATTEMPTS - 1:
                     retry_after = response.headers.get("Retry-After")
@@ -193,9 +195,12 @@ def fetch_posts(account, cutoff):
             response.raise_for_status()
 
             data = response.json()
+            if not isinstance(data, dict):
+                raise ValueError("La respuesta de FxTwitter no es un objeto JSON valido.")
+
             api_code = data.get("code", response.status_code)
 
-            # La API tambien incluye el codigo dentro del JSON
+            # La API tambien incluye el codigo dentro del JSON.
             if api_code == 204:
                 return []
 
@@ -211,9 +216,11 @@ def fetch_posts(account, cutoff):
 
             results = data.get("results", [])
             if not isinstance(results, list):
-                raise ValueError("La respuesta de FxTwitter no contiene una lista 'results'.")
+                raise ValueError(
+                    "La respuesta de FxTwitter no contiene una lista 'results'."
+                )
 
-            # Sin groupthreads, normalmente cada resultado es una publicacion individual
+            # Cada resultado suele ser una publicacion individual.
             return [
                 post for post in results
                 if isinstance(post, dict) and post.get("type", "status") == "status"
@@ -246,7 +253,8 @@ def send_news(account, post, published_time):
 
     post_id = get_post_id(post)
     link = post.get("url") or (
-        f"https://x.com/{account}/status/{post_id}" if post_id else f"https://x.com/{account}"
+        f"https://x.com/{account}/status/{post_id}"
+        if post_id else f"https://x.com/{account}"
     )
 
     # Hora UTC convertida a Peru (UTC-5)
@@ -300,7 +308,7 @@ def check_feeds(state):
         print(f"\nComprobando {account}...")
 
         try:
-            posts = fetch_posts(account, cutoff)
+            posts = fetch_posts(account)
 
             if account not in state or not isinstance(state.get(account), list):
                 state[account] = []
@@ -320,13 +328,13 @@ def check_feeds(state):
                     print(f"Publicacion {post_id} ignorada: no tiene fecha valida.")
                     continue
 
-                # Validacion local adicional del filtro de 30 minutos
+                # Validacion local del filtro de 30 minutos.
                 if published_time < cutoff:
                     continue
 
                 new_posts.append((published_time, post))
 
-            # Publicar desde la mas antigua hasta la mas reciente
+            # Publicar desde la mas antigua hasta la mas reciente.
             new_posts.sort(key=lambda item: item[0])
 
             if not new_posts:
@@ -366,13 +374,13 @@ def main():
 
     state = load_state()
 
-    # En GitHub Actions: una sola comprobacion por ejecucion
+    # En GitHub Actions: una sola comprobacion por ejecucion.
     if os.getenv("GITHUB_ACTIONS") == "true":
         check_feeds(state)
         print("\nComprobacion finalizada.")
         return
 
-    # En tu PC: mantener el funcionamiento continuo
+    # En tu PC: mantener el funcionamiento continuo.
     while True:
         check_feeds(state)
         print(
