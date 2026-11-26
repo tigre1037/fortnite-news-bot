@@ -209,8 +209,6 @@ if account not in state:
 
 seen = set(state[account])
 
-            
-seen = set(state[account])
 cutoff = datetime.now(timezone.utc) - timedelta(minutes=30)
 
 new_posts = []
