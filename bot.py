@@ -1,0 +1,298 @@
+
+import os
+import re
+import json
+import time
+import html
+import requests
+import feedparser
+
+from pathlib import Path
+from datetime import datetime, timezone, timedelta
+from dotenv import load_dotenv
+
+# =====================================
+# CONFIGURACION
+# =====================================
+
+BASE_DIR = Path(__file__).parent
+load_dotenv(BASE_DIR / ".env")
+
+WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
+
+if not WEBHOOK_URL:
+    raise SystemExit("No se encontro el webhook en .env")
+
+FEEDS = {
+    "InfoFortniteES": "https://fixupx.com/InfoFortniteES/feed.xml",
+    "Fortnite_ES": "https://fixupx.com/Fortnite_ES/feed.xml"
+}
+
+STATE_FILE = BASE_DIR / "seen_posts.json"
+
+# Revisar cada 5 minutos
+POLL_SECONDS = 300
+
+# Zona horaria de Costa Rica
+CR_TIMEZONE = timezone(timedelta(hours=-6))
+
+
+# =====================================
+# MEMORIA DE PUBLICACIONES
+# =====================================
+
+def load_state():
+    if not STATE_FILE.exists():
+        return {}
+
+    try:
+        return json.loads(STATE_FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        print("No se pudo leer el historial. Se creara uno nuevo.")
+        return {}
+
+
+def save_state(state):
+    temp_file = STATE_FILE.with_suffix(".tmp")
+    temp_file.write_text(
+        json.dumps(state, ensure_ascii=False, indent=2),
+        encoding="utf-8"
+    )
+    temp_file.replace(STATE_FILE)
+
+
+def get_post_id(post):
+    return post.get("id") or post.get("link") or post.get("title")
+
+
+# =====================================
+# EXTRAER TEXTO E IMAGEN
+# =====================================
+
+def clean_text(raw):
+    raw = re.sub(r"<br\s*/?>", "\n", raw, flags=re.I)
+    raw = re.sub(r"</p\s*>", "\n\n", raw, flags=re.I)
+    raw = re.sub(r"<[^>]+>", "", raw)
+
+    return html.unescape(raw).strip()
+
+
+def get_image(post):
+    # Imagenes adjuntas al RSS
+    for enclosure in post.get("enclosures", []):
+        url = enclosure.get("href") or enclosure.get("url")
+        content_type = enclosure.get("type", "").lower()
+
+        if url and (
+            content_type.startswith("image/")
+            or re.search(r"\.(jpg|jpeg|png|gif|webp)(\?|$)", url, re.I)
+        ):
+            return url
+
+    # Miniaturas de videos
+    thumbnails = post.get("media_thumbnail", [])
+
+    if thumbnails:
+        return thumbnails[0].get("url")
+
+    # Buscar una imagen dentro del HTML
+    summary = post.get("summary", "")
+    match = re.search(
+        r'<img[^>]+src=["\']([^"\']+)',
+        summary,
+        re.I
+    )
+
+    if match:
+        return match.group(1)
+
+    return None
+
+
+# =====================================
+# ENVIAR NOTICIA A DISCORD
+# =====================================
+
+def send_news(account, post):
+
+    title = post.get("title", "Nueva publicacion")
+    link = post.get("link", "")
+    summary = post.get("summary", "")
+
+    description = clean_text(summary) if summary else title
+
+    if len(description) > 3900:
+        description = description[:3897] + "..."
+
+    # Convertir la fecha UTC a hora de Costa Rica
+    published = post.get("published_parsed") or post.get("updated_parsed")
+
+    embed = {
+        "author": {
+            "name": account,
+            "url": "https://x.com/" + account
+        },
+        "title": title[:256],
+        "url": link,
+        "description": description or "Nueva publicacion.",
+        "color": 5793266,
+        "footer": {
+            "text": "X News Bot"
+        }
+    }
+
+    if published:
+        date = datetime(
+            *published[:6],
+            tzinfo=timezone.utc
+        ).astimezone(CR_TIMEZONE)
+
+        embed["timestamp"] = date.isoformat()
+        embed["footer"]["text"] = (
+            "X News Bot | " + date.strftime("%d/%m/%Y - %H:%M")
+            + " (Costa Rica)"
+        )
+
+    image = get_image(post)
+
+    if image:
+        embed["image"] = {"url": image}
+
+    payload = {
+        "username": "X News Bot",
+        "embeds": [embed],
+        "allowed_mentions": {"parse": []}
+    }
+
+    response = requests.post(
+        WEBHOOK_URL,
+        json=payload,
+        timeout=20
+    )
+
+    response.raise_for_status()
+
+
+# =====================================
+# COMPROBAR NOTICIAS NUEVAS
+# =====================================
+
+def check_feeds(state):
+
+    for account, url in FEEDS.items():
+
+        print(f"\nComprobando {account}...")
+
+        try:
+            response = requests.get(
+                url,
+                headers={"User-Agent": "Mozilla/5.0"},
+                timeout=25
+            )
+
+            response.raise_for_status()
+
+            feed = feedparser.parse(response.content)
+
+            if not feed.entries:
+                print("No se encontraron publicaciones.")
+                continue
+
+            # Primera ejecucion: guardar publicaciones existentes
+            # para NO enviar las 125 noticias antiguas.
+            if account not in state:
+
+                state[account] = [
+                    get_post_id(post)
+                    for post in feed.entries[:500]
+                    if get_post_id(post)
+                ]
+
+                save_state(state)
+
+                print(
+                    f"Historial inicial guardado: "
+                    f"{len(state[account])} publicaciones."
+                )
+
+                print("Solo se enviaran noticias nuevas.")
+                continue
+
+            seen = set(state[account])
+
+            # Ordenar desde la mas antigua a la mas reciente
+            new_posts = [
+                post for post in reversed(feed.entries)
+                if get_post_id(post) not in seen
+            ]
+
+            if not new_posts:
+                print("No hay noticias nuevas.")
+                continue
+
+            for post in new_posts:
+
+                post_id = get_post_id(post)
+
+                try:
+                    send_news(account, post)
+
+                    print("Noticia enviada:", post.get("title", "Sin titulo"))
+
+                    state[account].append(post_id)
+                    state[account] = state[account][-500:]
+
+                    save_state(state)
+
+                    seen.add(post_id)
+
+                except requests.RequestException as error:
+                    print("Error enviando noticia:", error)
+                    break
+
+        except requests.RequestException as error:
+            print(f"Error consultando {account}: {error}")
+
+
+# =====================================
+# INICIAR BOT
+# =====================================
+
+
+def main():
+
+    print("=================================")
+    print("       X NEWS BOT")
+    print("=================================")
+    print("Bot iniciado correctamente.")
+    print("Revisando cuentas de Fortnite...")
+
+    state = load_state()
+
+    # En GitHub: ejecutar una sola comprobacion
+    if os.getenv("GITHUB_ACTIONS") == "true":
+        check_feeds(state)
+        print("\nComprobacion finalizada.")
+        return
+
+    # En tu PC: mantener el funcionamiento normal
+    while True:
+
+        check_feeds(state)
+
+        print(
+            f"\nProxima comprobacion en "
+            f"{POLL_SECONDS // 60} minutos."
+        )
+
+        try:
+            time.sleep(POLL_SECONDS)
+
+        except KeyboardInterrupt:
+            print("\nBot detenido.")
+            break
+
+
+if __name__ == "__main__":
+    main()
+
