@@ -1,4 +1,3 @@
-
 import os
 import re
 import json
@@ -31,10 +30,10 @@ FEEDS = {
 
 STATE_FILE = BASE_DIR / "seen_posts.json"
 
-# Revisar cada 5 minutos
+# Revisar cada 5 minutos en ejecucion local
 POLL_SECONDS = 300
 
-# Zona horaria de Costa Rica
+# Zona horaria de Peru (UTC-5)
 PERU_TIMEZONE = timezone(timedelta(hours=-5))
 
 
@@ -99,7 +98,7 @@ def get_image(post):
     # Buscar una imagen dentro del HTML
     summary = post.get("summary", "")
     match = re.search(
-        r'<img[^>]+src=["\']([^"\']+)',
+        r"""<img[^>]+src=["']([^"']+)""",
         summary,
         re.I
     )
@@ -115,7 +114,6 @@ def get_image(post):
 # =====================================
 
 def send_news(account, post):
-
     title = post.get("title", "Nueva publicacion")
     link = post.get("link", "")
     summary = post.get("summary", "")
@@ -125,7 +123,7 @@ def send_news(account, post):
     if len(description) > 3900:
         description = description[:3897] + "..."
 
-    # Convertir la fecha UTC a hora de Costa Rica
+    # Convertir la fecha UTC a hora de Peru
     published = post.get("published_parsed") or post.get("updated_parsed")
 
     embed = {
@@ -150,7 +148,8 @@ def send_news(account, post):
 
         embed["timestamp"] = date.isoformat()
         embed["footer"]["text"] = (
-            "Noticias de Fortnite | " + date.strftime("%d/%m/%Y - %H:%M")
+            "Noticias de Fortnite | "
+            + date.strftime("%d/%m/%Y - %H:%M")
             + " (Perú)"
         )
 
@@ -178,21 +177,35 @@ def send_news(account, post):
 # COMPROBAR NOTICIAS NUEVAS
 # =====================================
 
-
 def check_feeds(state):
-
     for account, url in FEEDS.items():
-
         print(f"\nComprobando {account}...")
 
         try:
-            response = requests.get(
-                url,
-                headers={"User-Agent": "Mozilla/5.0"},
-                timeout=25
-            )
+            # Intentar consultar el RSS hasta 3 veces
+            for intento in range(3):
+                try:
+                    response = requests.get(
+                        url,
+                        headers={"User-Agent": "Mozilla/5.0"},
+                        timeout=25
+                    )
 
-            response.raise_for_status()
+                    if response.status_code == 404 and intento < 2:
+                        print(f"404 en {account}. Reintentando...")
+                        time.sleep(5)
+                        continue
+
+                    response.raise_for_status()
+                    break
+
+                except requests.RequestException:
+                    if intento == 2:
+                        raise
+
+                    print(f"Error temporal en {account}. Reintentando...")
+                    time.sleep(5)
+
             feed = feedparser.parse(response.content)
 
             if not feed.entries:
@@ -212,7 +225,6 @@ def check_feeds(state):
 
             # Ordenar desde la mas antigua a la mas reciente
             for post in reversed(feed.entries):
-
                 post_id = get_post_id(post)
 
                 if not post_id or post_id in seen:
@@ -250,7 +262,6 @@ def check_feeds(state):
 
             # Enviar publicaciones recientes
             for published_time, post in new_posts:
-
                 post_id = get_post_id(post)
 
                 try:
@@ -274,13 +285,12 @@ def check_feeds(state):
         except requests.RequestException as error:
             print(f"Error consultando {account}: {error}")
 
+
 # =====================================
 # INICIAR BOT
 # =====================================
 
-
 def main():
-
     print("=================================")
     print("       X NEWS BOT")
     print("=================================")
@@ -297,7 +307,6 @@ def main():
 
     # En tu PC: mantener el funcionamiento normal
     while True:
-
         check_feeds(state)
 
         print(
@@ -315,4 +324,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
