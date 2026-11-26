@@ -231,6 +231,18 @@ for post in reversed(feed.entries):
         ignored_old.append(post_id)
         continue
 
+        published_time = datetime.fromtimestamp(
+        calendar.timegm(published),
+        tz=timezone.utc
+    )
+
+    # Ignorar publicaciones de mas de 30 minutos
+    if published_time < cutoff:
+        ignored_old.append(post_id)
+        continue
+
+    new_posts.append((published_time, post))
+
     post_date = datetime(
         *published[:6],
         tzinfo=timezone.utc
