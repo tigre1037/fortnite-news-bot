@@ -26,7 +26,7 @@ if not WEBHOOK_URL:
 
 FEEDS = {
     "InfoFortniteES": "https://fxtwitter.com/InfoFortniteES/feed.xml",
-    "Fortnite_ES": "https://fxtwitter.com/Fortnite_ES/feed.xml"
+    "Fortnite_ES": "https://fxtwitter.com/Fortnite_ES/feed.atom.xml"
 }
 
 STATE_FILE = BASE_DIR / "seen_posts.json"
