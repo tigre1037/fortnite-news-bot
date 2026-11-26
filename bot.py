@@ -137,7 +137,7 @@ def send_news(account, post):
         "description": description or "Nueva publicacion.",
         "color": 5793266,
         "footer": {
-            "text": "X News Bot"
+            "text": "Noticias de Fortnite"
         }
     }
 
@@ -149,7 +149,7 @@ def send_news(account, post):
 
         embed["timestamp"] = date.isoformat()
         embed["footer"]["text"] = (
-            "X News Bot | " + date.strftime("%d/%m/%Y - %H:%M")
+            "Noticias de Fortnite | " + date.strftime("%d/%m/%Y - %H:%M")
             + " (Costa Rica)"
         )
 
