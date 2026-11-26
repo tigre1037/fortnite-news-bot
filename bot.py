@@ -198,25 +198,16 @@ def check_feeds(state):
                 print("No se encontraron publicaciones.")
                 continue
 
-            # Primera ejecucion: guardar publicaciones existentes
-            # para NO enviar las 125 noticias antiguas.
-            if account not in state:
+          # Primera ejecucion: iniciar historial sin saltarse
+# las publicaciones recientes.
+if account not in state:
+    state[account] = []
+    save_state(state)
 
-                state[account] = [
-                    get_post_id(post)
-                    for post in feed.entries[:500]
-                    if get_post_id(post)
-                ]
+    print("Historial inicializado.")
+    print("Comprobando publicaciones de los ultimos 30 minutos.")
 
-                save_state(state)
-
-                print(
-                    f"Historial inicial guardado: "
-                    f"{len(state[account])} publicaciones."
-                )
-
-                print("Solo se enviaran noticias nuevas.")
-                continue
+seen = set(state[account])
 
             
 seen = set(state[account])
