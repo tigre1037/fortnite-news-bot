@@ -129,11 +129,10 @@ def get_image(post):
 # CONSULTAR LA API DE FXTWITTER
 # =====================================
 
+
 def fetch_posts(account):
     url = f"{API_BASE_URL}/{account}/statuses"
 
-    # El filtro de 30 minutos se aplica localmente mas abajo.
-    # Asi evitamos depender del parametro opcional 'since' de la API.
     params = {
         "count": API_POST_COUNT,
         "lang": "es"
@@ -153,78 +152,65 @@ def fetch_posts(account):
                 timeout=25
             )
 
-            # 204 significa que no hay contenido para esta consulta.
+            # Reintentar respuestas 404, 429 y errores del servidor
+            if (
+                response.status_code == 404
+                or response.status_code == 429
+                or response.status_code >= 500
+            ):
+                if intento < MAX_ATTEMPTS - 1:
+                    print(
+                        f"HTTP {response.status_code} en {account}. "
+                        f"Reintentando ({intento + 2}/{MAX_ATTEMPTS})..."
+                    )
+                    time.sleep(RETRY_DELAY_SECONDS)
+                    continue
+
+                if response.status_code == 404:
+                    print(
+                        f"404 persistente en {account}. "
+                        "No se pudo consultar la cronologia."
+                    )
+                    return None
+
             if response.status_code == 204:
                 return []
-
-            # 404 no se interpreta como "no hay noticias".
-            # Se devuelve None para que check_feeds omita esta cuenta.
-            if response.status_code == 404:
-                detail = "cuenta no encontrada o cronologia no disponible"
-                try:
-                    error_data = response.json()
-                    if isinstance(error_data, dict):
-                        detail = (
-                            error_data.get("message")
-                            or error_data.get("error")
-                            or error_data.get("reason")
-                            or detail
-                        )
-                except ValueError:
-                    pass
-
-                print(f"La API devolvio 404 para {account}: {detail}.")
-                return None
-
-            # Reintentar errores temporales o limite de solicitudes.
-            if response.status_code == 429 or response.status_code >= 500:
-                if intento < MAX_ATTEMPTS - 1:
-                    retry_after = response.headers.get("Retry-After")
-                    try:
-                        wait_seconds = min(max(float(retry_after), 1), 30)
-                    except (TypeError, ValueError):
-                        wait_seconds = RETRY_DELAY_SECONDS
-
-                    print(
-                        f"Error HTTP {response.status_code} en {account}. "
-                        f"Reintentando en {wait_seconds:g} segundos..."
-                    )
-                    time.sleep(wait_seconds)
-                    continue
 
             response.raise_for_status()
 
             data = response.json()
+
             if not isinstance(data, dict):
-                raise ValueError("La respuesta de FxTwitter no es un objeto JSON valido.")
+                raise ValueError("Respuesta JSON no valida.")
 
             api_code = data.get("code", response.status_code)
 
-            # La API tambien puede indicar 204 dentro del JSON.
+            if api_code == 404:
+                if intento < MAX_ATTEMPTS - 1:
+                    print(f"404 en {account}. Reintentando...")
+                    time.sleep(RETRY_DELAY_SECONDS)
+                    continue
+
+                print(f"404 persistente en {account}.")
+                return None
+
             if api_code == 204:
                 return []
 
-            # Un 404 dentro del JSON tambien es un fallo de consulta.
-            if api_code == 404:
-                print(
-                    f"La API devolvio 404 para {account}: "
-                    "cuenta no encontrada o cronologia no disponible."
-                )
-                return None
-
             if api_code != 200:
-                raise ValueError(f"Codigo inesperado de FxTwitter: {api_code}")
+                raise ValueError(
+                    f"Codigo inesperado de FxTwitter: {api_code}"
+                )
 
             results = data.get("results", [])
-            if not isinstance(results, list):
-                raise ValueError(
-                    "La respuesta de FxTwitter no contiene una lista 'results'."
-                )
 
-            # Cada resultado suele ser una publicacion individual.
+            if not isinstance(results, list):
+                raise ValueError("La API no devolvio una lista de publicaciones.")
+
             return [
                 post for post in results
-                if isinstance(post, dict) and post.get("type", "status") == "status"
+                if isinstance(post, dict)
+                and post.get("type", "status") == "status"
             ]
 
         except (requests.RequestException, ValueError) as error:
@@ -232,8 +218,8 @@ def fetch_posts(account):
                 raise
 
             print(
-                f"Error temporal consultando {account}: {error}. "
-                f"Reintentando en {RETRY_DELAY_SECONDS} segundos..."
+                f"Error consultando {account}: {error}. "
+                "Reintentando..."
             )
             time.sleep(RETRY_DELAY_SECONDS)
 
