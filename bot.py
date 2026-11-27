@@ -27,7 +27,7 @@ ACCOUNTS = [
 
 # API publica de FxTwitter (JSON)
 API_BASE_URL = "https://api.fxtwitter.com/2/profile"
-API_POST_COUNT = 100  # La API permite un maximo de 100 por pagina
+API_POST_COUNT = 100
 
 STATE_FILE = BASE_DIR / "seen_posts.json"
 
@@ -153,14 +153,14 @@ def fetch_posts(account):
                 timeout=25
             )
 
-            # La API usa 204 cuando no hay publicaciones posteriores a 'since'.
-            # Aunque no enviamos 'since', contemplamos la respuesta por seguridad.
+            # 204 significa que no hay contenido para esta consulta.
             if response.status_code == 204:
                 return []
 
-            # La documentacion indica 404 para cuenta no encontrada o cronologia vacia.
+            # 404 no se interpreta como "no hay noticias".
+            # Se devuelve None para que check_feeds omita esta cuenta.
             if response.status_code == 404:
-                detail = "cuenta no encontrada o cronologia vacia"
+                detail = "cuenta no encontrada o cronologia no disponible"
                 try:
                     error_data = response.json()
                     if isinstance(error_data, dict):
@@ -174,7 +174,7 @@ def fetch_posts(account):
                     pass
 
                 print(f"La API devolvio 404 para {account}: {detail}.")
-                return []
+                return None
 
             # Reintentar errores temporales o limite de solicitudes.
             if response.status_code == 429 or response.status_code >= 500:
@@ -200,16 +200,17 @@ def fetch_posts(account):
 
             api_code = data.get("code", response.status_code)
 
-            # La API tambien incluye el codigo dentro del JSON.
+            # La API tambien puede indicar 204 dentro del JSON.
             if api_code == 204:
                 return []
 
+            # Un 404 dentro del JSON tambien es un fallo de consulta.
             if api_code == 404:
                 print(
                     f"La API devolvio 404 para {account}: "
-                    "cuenta no encontrada o cronologia vacia."
+                    "cuenta no encontrada o cronologia no disponible."
                 )
-                return []
+                return None
 
             if api_code != 200:
                 raise ValueError(f"Codigo inesperado de FxTwitter: {api_code}")
@@ -236,7 +237,7 @@ def fetch_posts(account):
             )
             time.sleep(RETRY_DELAY_SECONDS)
 
-    return []
+    return None
 
 
 # =====================================
@@ -309,6 +310,15 @@ def check_feeds(state):
 
         try:
             posts = fetch_posts(account)
+
+            # None significa que la API no pudo consultar la cuenta.
+            # No se debe mostrar como si simplemente no hubiera noticias.
+            if posts is None:
+                print(
+                    f"No se pudo consultar {account}. "
+                    "Se omite esta comprobacion."
+                )
+                continue
 
             if account not in state or not isinstance(state.get(account), list):
                 state[account] = []
